@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tourist Safety Control Room</title>
+    
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://unpkg.com/@geoman-io/leaflet-geoman-free@latest/dist/leaflet-geoman.css" />
+    
+    <style>
+        /* Force full screen */
+        html, body { height: 100%; margin: 0; padding: 0; overflow: hidden; font-family: sans-serif; background: #111; }
+        
+        #wrapper { display: flex; width: 100vw; height: 100vh; }
+
+        /* Sidebar Panels */
+        #sidebar { 
+            width: 350px; 
+            background: #1a1a1a; 
+            color: #eee; 
+            display: flex; 
+            flex-direction: column;
+            border-right: 2px solid #333;
+            z-index: 2000;
+        }
+
+        /* Map Container - THE FIX */
+        #map { 
+            flex: 1; 
+            height: 100vh !important; 
+            width: auto;
+            background: #222;
+        }
+
+        .panel-box { padding: 15px; border-bottom: 1px solid #333; }
+        .tab-row { display: flex; background: #000; padding: 5px; gap: 5px; }
+        .tab-btn { flex: 1; padding: 10px; cursor: pointer; border: none; background: #222; color: #888; border-radius: 4px; font-weight: bold; }
+        .tab-btn.active { background: #007bff; color: white; }
+
+        .score-display { background: #000; padding: 20px; border-radius: 10px; text-align: center; margin: 10px 0; border: 1px solid #444; }
+        #safety-score { font-size: 3rem; color: #28a745; font-weight: bold; display: block; }
+        
+        .log-area { flex: 1; overflow-y: auto; padding: 10px; font-family: monospace; font-size: 12px; background: #050505; color: #0f0; }
+        
+        button.action-btn { width: 100%; padding: 12px; margin: 5px 0; cursor: pointer; border-radius: 4px; border: none; font-weight: bold; }
+        .start-btn { background: #28a745; color: white; }
+        .refresh-btn { background: #666; color: white; font-size: 10px; }
+        
+        .hidden { display: none; }
+        .danger { color: #dc3545 !important; animation: blink 1s infinite; }
+        @keyframes blink { 50% { opacity: 0.5; } }
+    </style>
+</head>
+<body>
+
+<div id="wrapper">
+    <div id="sidebar">
+        <div class="panel-box">
+            <h3 style="margin:0">SIH SAFETY SYSTEM</h3>
+            <button class="action-btn refresh-btn" onclick="fixMap()">FIX MAP VIEW</button>
+        </div>
+
+        <div class="tab-row">
+            <button id="btn-mon" class="tab-btn active" onclick="switchTab('mon')">MONITOR</button>
+            <button id="btn-adm" class="tab-btn" onclick="switchTab('adm')">ADMIN</button>
+        </div>
+
+        <div id="panel-mon" class="panel-box">
+            <div class="score-display">
+                <small>SAFETY SCORE</small>
+                <span id="safety-score">100</span>
+                <div id="status-label" style="font-size: 12px; margin-top: 5px;">SECURE</div>
+            </div>
+            <strong>Live Incident Log:</strong>
+        </div>
+
+        <div id="panel-adm" class="panel-box hidden">
+            <p style="font-size: 13px; color: #ccc;">Use map icons to draw <b>Red Zones</b>.</p>
+            <button class="action-btn start-btn" onclick="startGps()">START LIVE TRACKER</button>
+            <div id="zone-info" style="margin-top:10px; color:#aaa">Zones Active: 0</div>
+        </div>
+
+        <div id="log" class="log-area">Ready... Define zones then start tracker.</div>
+    </div>
+
+    <div id="map"></div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/@geoman-io/leaflet-geoman-free@latest/dist/leaflet-geoman.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
+
+<script>
+    // 1. Initialize Map
+    var map = L.map('map').setView([20.5937, 78.9629], 5);
+    
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; OpenStreetMap'
+    }).addTo(map);
+
+    // Force map to render correctly
+    function fixMap() {
+        setTimeout(() => { map.invalidateSize(); }, 100);
+        addLog("Map View Refreshed.");
+    }
+    window.onload = fixMap;
+
+    // 2. Variables
+    var safetyScore = 100;
+    var redZones = L.featureGroup().addTo(map);
+    var tourist = L.circleMarker([0,0], { radius: 12, color: '#007bff', fillColor: '#007bff', fillOpacity: 1 }).addTo(map);
+    var tracking = false;
+
+    // 3. Admin Tools (Geoman)
+    map.pm.addControls({ position: 'topright', drawMarker: false, drawCircleMarker: false, drawPolyline: false });
+
+    map.on('pm:create', (e) => {
+        e.layer.setStyle({ color: 'red', fillColor: '#f00', fillOpacity: 0.4 });
+        redZones.addLayer(e.layer);
+        updateZoneCount();
+        addLog("Admin: Created Red Zone");
+    });
+
+    map.on('pm:remove', (e) => {
+        redZones.removeLayer(e.layer);
+        updateZoneCount();
+        addLog("Admin: Deleted Red Zone");
+        checkSafety(tourist.getLatLng().lat, tourist.getLatLng().lng);
+    });
+
+    // 4. Tab Logic
+    function switchTab(type) {
+        document.getElementById('panel-mon').classList.toggle('hidden', type !== 'mon');
+        document.getElementById('panel-adm').classList.toggle('hidden', type !== 'adm');
+        document.getElementById('btn-mon').classList.toggle('active', type === 'mon');
+        document.getElementById('btn-adm').classList.toggle('active', type === 'adm');
+        if(type === 'adm') map.pm.addControls(); else map.pm.removeControls();
+    }
+
+    // 5. GPS & Safety Logic
+    function startGps() {
+        if (!navigator.geolocation) return alert("No GPS support");
+        addLog("Starting GPS Stream...");
+        
+        navigator.geolocation.watchPosition((pos) => {
+            let lat = pos.coords.latitude;
+            let lng = pos.coords.longitude;
+            tourist.setLatLng([lat, lng]);
+            map.setView([lat, lng], 16);
+            checkSafety(lat, lng);
+        }, (err) => addLog("Error: " + err.message), { enableHighAccuracy: true });
+    }
+
+    function checkSafety(lat, lng) {
+        let pt = turf.point([lng, lat]);
+        let danger = false;
+
+        redZones.eachLayer((layer) => {
+            if (turf.booleanPointInPolygon(pt, layer.toGeoJSON())) danger = true;
+        });
+
+        let scoreEl = document.getElementById('safety-score');
+        let label = document.getElementById('status-label');
+
+        if (danger) {
+            safetyScore = Math.max(0, safetyScore - 1);
+            scoreEl.innerText = safetyScore;
+            scoreEl.className = 'danger';
+            label.innerText = "🚨 DANGER: RED ZONE";
+            label.style.color = "red";
+        } else {
+            scoreEl.classList.remove('danger');
+            label.innerText = "SECURE";
+            label.style.color = "#28a745";
+        }
+    }
+
+    function updateZoneCount() {
+        document.getElementById('zone-info').innerText = "Zones Active: " + redZones.getLayers().length;
+    }
+
+    function addLog(msg) {
+        let log = document.getElementById('log');
+        log.innerHTML = `> ${msg}<br>` + log.innerHTML;
+    }
+</script>
+</body>
+</html>

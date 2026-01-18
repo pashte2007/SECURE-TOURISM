@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Panic Button</title>
+    <style>
+        body { font-family: sans-serif; text-align: center; background-color: #f0f0f0; padding: 20px; }
+        
+        #video { 
+            width: 100%; max-width: 400px; 
+            border: 3px solid #333; border-radius: 10px; 
+            background: black;
+        }
+
+        .btn-panic {
+            background-color: #ff0000; color: white;
+            border: none; padding: 20px 40px;
+            font-size: 24px; font-weight: bold;
+            border-radius: 50px; cursor: pointer;
+            margin-top: 20px;
+            box-shadow: 0 5px 15px rgba(255, 0, 0, 0.4);
+        }
+        .btn-panic:active { transform: scale(0.95); }
+        
+        #status { margin-top: 20px; font-weight: bold; color: #555; }
+    </style>
+</head>
+<body>
+
+    <h1>🚨 EMERGENCY ALERT 🚨</h1>
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="canvas" style="display:none;"></canvas>
+
+    <br>
+    <button class="btn-panic" onclick="sendHelp()">SEND HELP</button>
+    <div id="status">Camera loading...</div>
+
+    <script>
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const statusTxt = document.getElementById('status');
+
+        // 1. Start Camera
+        navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
+            .then(stream => { 
+                video.srcObject = stream; 
+                statusTxt.innerText = "Ready. Tap button to send alert.";
+            })
+            .catch(err => { 
+                statusTxt.innerText = "Camera Error! Allow permissions.";
+                statusTxt.style.color = "red";
+            });
+
+        function sendHelp() {
+            statusTxt.innerText = "📍 Getting Location...";
+            statusTxt.style.color = "orange";
+
+            if (!navigator.geolocation) {
+                statusTxt.innerText = "Geolocation not supported!";
+                return;
+            }
+
+            navigator.geolocation.getCurrentPosition(position => {
+                const lat = position.coords.latitude;
+                const long = position.coords.longitude;
+
+                // 2. Capture Photo
+                statusTxt.innerText = "📸 Capturing Evidence...";
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                canvas.getContext('2d').drawImage(video, 0, 0);
+                const imageBase64 = canvas.toDataURL('image/jpeg', 0.7);
+
+                // 3. Send to Backend
+                statusTxt.innerText = "🚀 Sending to WhatsApp...";
+                
+                fetch('/send_panic_alert', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        latitude: lat, 
+                        longitude: long, 
+                        image: imageBase64 
+                    })
+                })
+                .then(res => res.json())
+                .then(data => {
+                    if(data.status === "success") {
+                        statusTxt.innerText = "✅ HELP SENT!";
+                        statusTxt.style.color = "green";
+                    } else {
+                        statusTxt.innerText = "❌ FAILED: " + data.message;
+                        statusTxt.style.color = "red";
+                    }
+                })
+                .catch(err => {
+                    statusTxt.innerText = "❌ Network Error";
+                });
+
+            }, error => {
+                statusTxt.innerText = "Location denied! Enable GPS.";
+            });
+        }
+    </script>
+</body>
+</html>

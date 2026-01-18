@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>AI Safety Guard</title>
+    <style>
+        body { font-family: sans-serif; text-align: center; padding: 50px; background: #f0f2f5; }
+        .card { background: white; padding: 30px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); display: inline-block; }
+        h1 { color: #333; margin-bottom: 5px; }
+        p { color: #666; }
+        .status-box { padding: 20px; font-size: 24px; font-weight: bold; border-radius: 10px; margin-top: 20px; transition: 0.3s; }
+        .safe { background: #d4edda; color: #155724; border: 2px solid #c3e6cb; }
+        .danger { background: #f8d7da; color: #721c24; border: 2px solid #f5c6cb; animation: pulse 1.5s infinite; }
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.6; } 100% { opacity: 1; } }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>🛰️ Geofence Guard</h1>
+        <p>System checks your location every <strong>10 seconds</strong>.</p>
+        
+        <div id="status" class="status-box" style="background: #eee; color: #555;">
+            Initializing...
+        </div>
+        
+        <p id="coords" style="margin-top: 15px; font-size: 14px;">Waiting for timer...</p>
+    </div>
+
+    <script>
+        function sendLocation(position) {
+            const lat = position.coords.latitude;
+            const long = position.coords.longitude;
+            
+            document.getElementById('coords').innerText = `Checked at ${new Date().toLocaleTimeString()} \n Location: ${lat.toFixed(5)}, ${long.toFixed(5)}`;
+
+            // Send to Python Backend
+            fetch('/check_location', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({lat: lat, long: long})
+            })
+            .then(response => response.json())
+            .then(data => {
+                const box = document.getElementById('status');
+                if (data.status === "SAFE") {
+                    box.innerText = "✅ STATUS: SAFE";
+                    box.className = "status-box safe";
+                } else {
+                    box.innerText = "⚠️ STATUS: ANOMALY DETECTED";
+                    box.className = "status-box danger";
+                }
+            })
+            .catch(err => console.error("Error:", err));
+        }
+
+        function getLocation() {
+            const statusBox = document.getElementById('status');
+            
+            if (!navigator.geolocation) {
+                statusBox.innerText = "❌ Browser does not support GPS";
+                return;
+            }
+
+            statusBox.innerText = "🛰️ Requesting Permission...";
+
+            navigator.geolocation.getCurrentPosition(
+                sendLocation, 
+                (err) => { 
+                    // This will tell us EXACTLY what is wrong
+                    let errorMsg = "";
+                    switch(err.code) {
+                        case err.PERMISSION_DENIED:
+                            errorMsg = "❌ You clicked Block (Reset Permissions!)";
+                            break;
+                        case err.POSITION_UNAVAILABLE:
+                            errorMsg = "❌ Signal Weak / GPS Off";
+                            break;
+                        case err.TIMEOUT:
+                            errorMsg = "❌ GPS Timed Out (Go Outside)";
+                            break;
+                        default:
+                            errorMsg = "❌ Error: " + err.message;
+                    }
+                    statusBox.innerText = errorMsg;
+                    statusBox.style.color = "red";
+                },
+                { 
+                    enableHighAccuracy: false, 
+                    timeout: 20000,   // Wait 20 seconds before failing
+                    maximumAge: 0 
+                }
+            );
+        }
+        // 1. Run immediately on load
+        getLocation();
+
+        // 2. Then run every 10,000 milliseconds (10 seconds)
+        setInterval(getLocation, 10000);
+    </script>
+</body>
+</html>
